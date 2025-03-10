@@ -1,0 +1,488 @@
+from __future__ import annotations
+import re
+import os
+from tree import TreeNode, walk_tree
+from copy import deepcopy
+from bnf_manipulation import de_string
+from pprint import pprint
+from typing import Iterator, Callable
+from rules import *
+
+
+def within_span(spans: list[list[int, int]], span: list[int, int]) -> bool:
+    """
+    Returns if a given span is encompassed within a list of spans. 
+    """
+    for i in spans:
+        lower_bound = i[0]
+        upper_bound = i[1]
+        if span[0] >= lower_bound and span[1] <= upper_bound:
+            return True
+    return False
+
+
+class Tokenizer:
+    def __init__(self, code: str, rules: RuleType):
+        self.code = code
+        self.rules = rules
+        self.returned_tokens: list[Token] = []
+        self.token_stream = self._tokens()
+
+    def tokenise_line(self, line: str, line_number: int):
+        matches: list[tuple[RuleType, str, tuple[int, int]]] = []
+        spans = []
+        for enum in self.rules:
+            rule = enum.value
+            match_objs: Iterator[re.Match[str]] = re.finditer(rule, line)
+            for match_obj in match_objs:
+                match enum:
+                    # if we match a comment or flag, we skip the entire line.
+                    # comments can be simply ignored.
+                    # flags are simple hard coded features that which we can use to 
+                    # decide whether a function waits for screen refresh or not. 
+                    case self.rules.Comment:
+                        yield Token(self.rules.Comment, line[2:], (line_number, 0))
+                        return 
+                    case self.rules.Flag:
+                        yield Token(self.rules.Flag, line[3:], (line_number, 0))
+                        return
+                    case _: # type: ignore
+
+                        # i don't know why,
+                        # but group(0) is not included in .groups()?
+                        for i in range(len((match_obj.group(0),) + match_obj.groups())):
+                            # if we've already matched this entire word before, skip.
+                            if within_span(spans, match_obj.span(i)):
+                                continue
+
+                            if match_obj.group(i) is None:
+                                continue
+                            
+                            # appends the matches found, with the third index being the position we found it in.
+                            matches.append((enum, match_obj.group(i), match_obj.span(i)))
+                            spans.append(match_obj.span(i))
+
+        # we sort the matches found by the position we find it in, so whenever we call
+        # next() on this iterator, we'll get the next token in chronological order.
+        matches.sort(key=lambda x: x[2][0])
+        for match in matches:
+            yield Token(match[0], match[1], (line_number, match[2][0]))
+
+    # returns the next token from the token stream
+    def get_next_token(self) -> Token | None:
+        if len(self.returned_tokens) > 0:
+            return self.returned_tokens.pop()
+        else:
+            try:
+                return next(self.token_stream)
+            except StopIteration:
+                return None
+    
+    # compiler can give back the token once it's finished with it. 
+    def return_token(self, token: Token):
+        self.returned_tokens.insert(0, token)
+
+    # returns a generator which gives you tokens
+    def _tokens(self):
+        seperator = re.compile(self.rules.StatementSeperator.value)
+        for line_number, line in enumerate(re.split(seperator, self.code)):
+            yield from self.tokenise_line(line, line_number)
+            yield Token(self.rules.StatementSeperator, "\n", (line_number, 0))
+
+
+
+# Each rule is grouped. 
+# If the rule was non-optional in the first place, it will always have a length of one. 
+# If not, it will be grouped with the rest of its optional members. 
+
+
+def comparitor_factory(rule_name: str, regex_str: str, inverted: bool=False):
+    """Returns a function that compares a given token to the regex.
+    Returns True on match. 
+    """
+    regex = re.compile(regex_str)
+
+    def compare(token: tuple[BNFRules, str]):
+        
+        match_obj = re.match(regex, token[1])
+        return (match_obj is not None) and not inverted    
+    return compare
+
+
+def match_groups(rule_name: str, regex_strs: list[BNFPreDefined], inverted: bool=False):
+    """Returns a function that compares a given token to multiple rules at once. 
+    Returns True if all match. 
+    """
+    compiled: list[re.Pattern[str]] = []
+    for i in regex_strs:
+        compiled.append(re.compile(i.value))
+
+    def compare(token: Token):
+        for i in compiled:
+            if re.match(i, token[1]) is not None:
+                return not inverted
+        return inverted
+    
+    return compare
+
+
+def return_slice_or_empty(list_part):
+    if len(list_part) > 0:
+        return [list_part]
+    else:
+        return []
+
+
+class BNFParser:
+    def __init__(self, grammar: str):
+        """
+        Creates a parser for a given grammar.
+        The parameter 'grammar' should be in EBNF/BNF. 
+        """
+        self.rules: dict[str, IncompleteRules] = {}
+        self.literals: dict[str, Callable[[Token], bool]] = {}
+        self.visited: set[tuple[str, Token]] = set()
+        self.tokenizer = Tokenizer(grammar, BNFRules)     
+
+        # we compile some regex for building blocks.
+        # these are for any rules in the bnf file that starts with a capital letter. 
+        # such rules are made here because they can be represented easily with regex,
+        # e.g. Numbers, Symbols, Booleans, etc.
+        for existing_rule in BNFPreDefined:
+            self._create_pre_defined_rule(existing_rule)
+        
+        for keyword in Keywords:
+            self._create_pre_defined_rule(keyword)
+            
+    def _create_pre_defined_rule(self, rule: RuleType):
+        if rule is BNFPreDefined.Symbol:
+            rule_name = rule.name
+            rule_value = rule.value
+            def compare_name(token: Token):
+                return comparitor_factory(rule_name, rule_value)(token) and match_groups(rule_name, Keywords, True)(token)
+
+            self.literals["<" + rule.name + ">"] = compare_name
+        else:
+            self.literals["<" + rule.name + ">"] = comparitor_factory(rule.name, rule.value)
+
+    def _handle_rule_optionals(self, optional_str: str, optional_type: str):
+        # The tokenizer consider optional rules as a singular rule. 
+        # As such, we create another tokenizer specifically for this inner section. 
+
+        # So we append into another list where the first rule will specify what type of optional it is. 
+        optionals = []
+        for i in Tokenizer(optional_str, BNFRules).token_stream:
+            token_type = i[0]
+            token_str = i[1]
+            if token_type is BNFRules.StringLiteral:                
+                optionals.append((comparitor_factory(de_string(token_str), de_string(token_str)), optional_type))
+                optional_type = "!"
+            elif token_type is BNFRules.Rule:
+                optionals.append((token_str, optional_type))
+                optional_type = "!"
+        return optionals
+
+    def _new_rule(self, name: str):
+        token = self.tokenizer.get_next_token()
+        if token is None:
+            return
+        
+        token_type = token[0]
+        token_str = token[1]
+
+        if token_type is BNFRules.StatementSeperator:
+            return
+        
+        if not token_type is BNFRules.Pipe:
+            if token_type is BNFRules.StringLiteral:
+                self.rules[name][-1].append([(comparitor_factory(name, de_string(token_str)), "!")])
+            elif token_type is BNFRules.CurlyBrackets:
+                self.rules[name][-1].append(self._handle_rule_optionals(token_str[1:-1], "*"))
+            elif token_type is BNFRules.SquareBrackets:
+                self.rules[name][-1].append(self._handle_rule_optionals(token_str[1:-1], "?"))
+            else:
+                self.rules[name][-1].append([(token_str, "!")])
+        elif len(self.rules[name][-1]) > 0:
+            self.rules[name].append([])
+            
+        self._new_rule(name)
+
+    def generate(self):
+        """
+        Converts the bnf file into a slightly more readable version for the compiler. 
+        """
+        while True:
+            token = self.tokenizer.get_next_token()
+            if token is None:
+                break
+            token_str = token[1]    
+            if token[0] is BNFRules.StatementSeperator:
+                continue
+
+            next_token = self.tokenizer.get_next_token()
+            next_token_type = next_token[0]
+            if next_token_type is BNFRules.Assign:
+                self.rules[token_str] = [[]]
+                self._new_rule(token_str.strip())
+            else:
+                self.tokenizer.return_token(next_token)
+
+
+class Parser:
+    def __init__(self, bnf_parser: BNFParser):
+        self.rules: dict[str, IncompleteRules] = bnf_parser.rules
+        self.literals: dict[str, Callable] = bnf_parser.literals
+        self.visited: set[tuple[str, Token]] = set()
+
+    def _is_terminator(self, rule: Rule):
+        if callable(rule[0]):
+            return True
+        elif rule[0] in self.literals:
+            return True
+        return False
+
+    def _check_terminator(self, rule: Rule, token: Token):
+        if callable(rule[0]):
+            return rule[0](token)
+        elif rule[0] in self.literals:
+            return self.literals[rule[0]](token)
+        return False
+    
+    def _consume_token(self, token: Token, incomplete_rules: IncompleteRules):
+        pass
+
+    def _append_incomplete_rule(self, token: Token, incomplete_rules: IncompleteRules, ast_node: TreeNode, rule_name: str="<stat>") -> int | bool:
+        if (rule_name, token) in self.visited:
+            # We're stuck in a loop, so this is a lost cause. Return False. 
+            # Syntax error!
+            return False
+        self.visited.add((rule_name, token))
+        rules = self.rules
+        for options in rules[rule_name]:
+            optional_offset = 0
+            # EWWWWW
+            options = deepcopy(options)
+            for rule_tokens in options:
+                rule = rule_tokens[0]
+                if self._is_terminator(rule):
+                    if self._check_terminator(rule, token):
+                        if rule[1] != "!":
+                            if rule[1] == "?":
+                                to_append = return_slice_or_empty(rule_tokens[1:]) + options[optional_offset + 1:]
+                            elif rule[1] == "*":
+                                to_append = return_slice_or_empty(rule_tokens[1:]) + options[optional_offset:]
+                            else:
+                                raise SyntaxError(f"Unrecognised option type '{rule[1]}'")
+                        else:
+                            to_append = return_slice_or_empty(rule_tokens[1:]) + options[optional_offset + 1:]
+
+                        if len(to_append) > 0:
+                            incomplete_rules.append([rule_name] + to_append)
+                        return len(to_append)
+                    elif rule[1] == "!":
+                        break
+                else:
+                    to_append = []
+                    
+                    rules_appended = self._append_incomplete_rule(token, to_append, ast_node, rule[0])
+                    if rules_appended is not False:
+                        if len(to_append) > 0:
+                            current_append = options[optional_offset:]
+                        else:
+                            
+                            if rule[1] != "!":
+                                if rule[1] == "?":
+                                    current_append = return_slice_or_empty(rule_tokens[1:]) + options[optional_offset + 1:]
+                                elif rule[1] == "*":
+                                    current_append = return_slice_or_empty(rule_tokens[1:]) + options[optional_offset:]
+                                else:
+                                    raise SyntaxError(f"Unrecognised option type '{rule[1]}'")
+                            else:
+                                current_append = return_slice_or_empty(rule_tokens[1:]) + options[optional_offset + 1:]
+
+                        if len(current_append) > 0:
+                            incomplete_rules.append([rule_name] + current_append)
+                            if len(to_append) > 0:
+                                
+                                for i in to_append:
+                                    incomplete_rules.append(i)
+
+                        return len(current_append)
+                    if rule[1] == "!":
+                        break
+                optional_offset += 1
+        return False
+    
+    def _delete_finished_rules(self, incomplete_rules: IncompleteRules, delete_any: bool=False):
+        if len(incomplete_rules) == 0:
+            return
+
+        rule_group = incomplete_rules[-1]
+
+        if delete_any is True:
+            if len(rule_group) == 2:
+                rule_group.pop(1)
+                return self._delete_finished_rules(incomplete_rules, delete_any)
+
+        if len(rule_group) == 1:
+            rule_name_popped = rule_group[0]
+
+            incomplete_rules.pop()
+            if len(incomplete_rules) == 0:
+                return
+
+            if incomplete_rules[-1][1][0][0] == rule_name_popped and (incomplete_rules[-1][1][0][1] == "!" or delete_any):
+                incomplete_rules[-1][1].pop(0)
+                if len(incomplete_rules[-1][1]) == 0:
+                    incomplete_rules[-1].pop(1)
+                if len(incomplete_rules) == 0:
+                    return
+                if len(incomplete_rules[-1]) == 2 and incomplete_rules[-1][1][0][0] == rule_name_popped and (incomplete_rules[-1][1][0][1] == "!" or delete_any):
+                    incomplete_rules[-1][1].pop(0)
+                    if len(incomplete_rules[-1][1]) == 0:
+                        incomplete_rules[-1].pop(1)
+            
+            if len(incomplete_rules) == 0:
+                return
+                
+            self._delete_finished_rules(incomplete_rules)
+
+    def _handle_optional(self, rule: str, token: Token, unconsumed_rules: list[Rule | list[Rule]], incomplete_rules: IncompleteRules, ast_node: TreeNode):
+        if rule[1] == "!":
+            return False
+        
+        if len(unconsumed_rules[1:]) == 0:
+            
+            incomplete_rules.pop()
+            
+            if len(incomplete_rules) == 0:
+                return self._append_incomplete_rule(token, incomplete_rules, ast_node)
+
+            incomplete_rules[-1][1].pop(0)
+            if len(incomplete_rules[-1][1]) == 0:
+                incomplete_rules[-1].pop(1)
+        else:
+            incomplete_rules[-1].pop(1)
+        self._delete_finished_rules(incomplete_rules)
+        return self._pop_incomplete_rule(token, incomplete_rules, ast_node)
+    
+    def _completed_rule(self, incomplete_rule: IncompleteRules, incomplete_rules: IncompleteRules):
+        if incomplete_rule[1][0][1] in ["!", "?"]:
+            incomplete_rule[1].pop(0)
+        elif incomplete_rule[1][0][1] == "*":
+            incomplete_rule.insert(1, incomplete_rule[1][1:])
+        if len(incomplete_rule[1]) == 0:
+            incomplete_rules[-1].pop(1)
+
+    def _pop_incomplete_rule(self, token: Token, incomplete_rules: IncompleteRules, ast_node: TreeNode) -> bool | int:
+        if len(incomplete_rules) == 0:
+            return self._append_incomplete_rule(token, incomplete_rules, ast_node)
+        last_index = len(incomplete_rules) - 1
+        incomplete_rule = incomplete_rules[last_index]
+
+        unconsumed_rules = incomplete_rule[1:]
+
+        if len(unconsumed_rules) == 0:
+            return False
+
+        rule_tokens = unconsumed_rules[0]
+        rule = rule_tokens[0]
+
+        if self._is_terminator(rule):
+            if not self._check_terminator(rule, token):
+                return self._handle_optional(rule, token, unconsumed_rules, incomplete_rules, ast_node)
+            else:
+                self._completed_rule(incomplete_rule, incomplete_rules)
+                self._delete_finished_rules(incomplete_rules)
+                return True
+        else: 
+            rules_appended = self._append_incomplete_rule(token, incomplete_rules, ast_node, rule[0])
+            if rules_appended is not False:
+                if rules_appended == 0:
+                    self._completed_rule(incomplete_rule, incomplete_rules)
+                # self._completed_rule(incomplete_rule, incomplete_rules)
+                return True
+            else:
+                return self._handle_optional(rule, token, unconsumed_rules, incomplete_rules, ast_node)
+
+    def parse(self, tokenizer: Tokenizer) -> True | tuple[Token, Enum]:
+        incomplete_rules: IncompleteRules = []
+        root_node = TreeNode("<stat>")
+
+        statement_seperator = Token(CompilerRules.StatementSeperator, "\n", (-1, 0))
+
+        for token in tokenizer.token_stream:
+            if token[0] is CompilerRules.Comment:
+                continue
+            elif token[0] is CompilerRules.Flag:
+                continue
+            elif token[0] is CompilerRules.StatementSeperator:
+                continue
+            # elif token[0] is CompilerRules.StatementSeperator:
+            #     continue
+            self.visited.clear()
+
+            # AAAAAAAAAAAAAAAAAAAAAAAA
+            if len(incomplete_rules) == 0:
+                result = self._append_incomplete_rule(token, incomplete_rules, root_node)
+            else:
+                result = self._pop_incomplete_rule(token, incomplete_rules, root_node)
+            
+            root_node.append_ast(incomplete_rules, token)
+
+            if not result and len(incomplete_rules) > 0:
+                return token, incomplete_rules[-1][1][0]
+            
+            # self._consume_token(token, incomplete_rules)
+        
+        self._delete_finished_rules(incomplete_rules, True)
+            
+        if len(incomplete_rules) > 0:
+            return token, incomplete_rules[-1][1][0]
+        
+        root_node.display_tree()
+        walk_tree(root_node)
+
+        return True
+        # whoop! Syntax checking passed.
+
+
+class Compiler:
+    def __init__(self, code_fname: str, grammar_fname: str):
+        with open(code_fname) as f:
+            code = f.read()
+            self.code_path = os.path.abspath(f.name)
+
+        with open(grammar_fname) as f:
+            grammar = f.read()
+
+        bnf_parser = BNFParser(grammar)
+        bnf_parser.generate()
+        self.parser = Parser(bnf_parser)
+        self.code = code
+        self.tokenizer = Tokenizer(code, CompilerRules)
+
+    def print_syntax_error(self, lines: list[str], result: tuple[Token, Enum]):
+        line_number = result[0][2][0]
+        if line_number == -1:
+            line_number = len(lines) - 1
+
+        print("  Syntax Error in:", self.code_path, "line", line_number + 1)
+        print("\t" + lines[line_number])
+        print("\t" + " " * result[0][2][1] + "^HERE")
+        token_output = result[0][1]
+        if result[0][0] is CompilerRules.StatementSeperator:
+            token_output = "\\n"
+
+        if not self.parser._is_terminator((result[1][0], 0)):
+            next_rule = "' or '".join([i[0][0][0] for i in self.parser.rules[result[1][0]]])
+        else:
+            next_rule = result[1][0]
+        print(f"Expected '{next_rule}', got '{token_output}'")
+    
+    def compile(self):
+        result = self.parser.parse(self.tokenizer)
+        lines = self.code.split("\n")
+        if result is not True:
+            self.print_syntax_error(lines, result)
+

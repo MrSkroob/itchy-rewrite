@@ -1,0 +1,23 @@
+<chunk> ::= {<stat>} [<laststat>]
+<stat> ::= <While> <exp> <wrap> | <If> <exp> <wrap> {<ElseIf> <exp> <wrap>} [<Else> <wrap>] | <For> <Symbol> <forbody> <wrap> | [<NoRefresh>] <Define> <function> | [<Shared>] <Var> <Symbol> | <var> <assignorcall> | <wrap>
+<assignorcall> ::= <Assign> <exp> | <functioncall>
+<forbody> ::= <Equal> <exp> <FieldSeperator> <exp> <FieldSeperator> <exp> | <In> <var>
+<functioncall> ::= <args> {<args>}
+<namelist> ::= <Symbol> {<FieldSeperator> <Symbol>}
+<tableconstructor> ::= <OpenSquareBracket> [<explist1>] <CloseSquareBracket>
+<wrap> ::= <OpenCurlyBracket> [<chunk>] <CloseCurlyBracket>
+<function> ::= <Symbol> <funcbody>
+<funcbody> ::= <OpenBracket> [<paramlist>] <CloseBracket> <wrap>
+<slice> ::= <OpenSquareBracket> <exp> <CloseSquareBracket>
+<exp> ::= <OpenBracket> <equation> <CloseBracket> | <equation>
+<equation> ::= [<Unop>] <literals> {<Binop> <exp>}
+<var> ::= <Symbol> {<Dot> <Symbol>} [<slice>] 
+<literals> ::= <Bool> | <Number> | <String> | <var> [<functioncall>] | <tableconstructor>
+<explist1> ::= <exp> {<FieldSeperator> <explist1>}
+<laststat> ::= <Return> [<explist1>] | <Break>
+<varlist1> ::= <literals> {<FieldSeperator> <literals>}
+<args> ::= <OpenBracket> [<varlist1>] <CloseBracket>
+<argtype> ::= <Symbol> <Colon> <Type>
+<paramlist> ::= <argtype> {<FieldSeperator> <argtype>}
+
+// note that rules with capital letters are terminators. 
