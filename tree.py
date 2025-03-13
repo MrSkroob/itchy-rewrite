@@ -17,35 +17,70 @@ class TreeNode:
     """
     FIXME 
     Gotta work out a way to append child nodes to the correct layer...
-    """
-    
-    def append_ast(self, incomplete_rules: IncompleteRules, token: Token):
-        if len(incomplete_rules) - 1 != TreeNode.prev_layer:
-            if len(incomplete_rules) >= TreeNode.prev_layer:
-                TreeNode.new_children_layer = TreeNode.prev_layer
-            else:
-                TreeNode.new_children_layer = len(incomplete_rules) - 1
-            TreeNode.prev_layer = len(incomplete_rules) - 1
 
-        start_node = self
-        for layer, rule in enumerate(incomplete_rules):
-            rule_name = rule[0]
-            first_child = start_node.find_first_child(rule_name)
-            if start_node.layer <= TreeNode.new_children_layer and first_child is not None:
-                start_node = first_child
-            # else:
-            start_node = start_node.append_child(rule_name)
-            start_node.append_child("RAW_STR", token.token_str)
+    So let's say we have something like this:
+
+    var boolean
+    var integer
+
+    boolean = true
+    integer = 0
+
+    ideally the ast would look like this:
+
+    <stat>
+        <vardefstat> 
+            var
+            boolean
+        <vardefstat>
+            var
+            integer
+        <varassignstat>
+            boolean
+            <assignorcall>
+                =
+                true
+        <varassignstat>
+            integer
+            <assignorcall>
+                =
+                0
+    """
+    def append_ast(self, incomplete_rules: IncompleteRules, token: Token):
+        root_node = self
+        if len(incomplete_rules) > 0:
+            token_rule = incomplete_rules[-1][1:][0] # the rule generated after the token matched. 
+            # print(token_rule)
+            new_branch = False
+        else:
+            new_branch = True
+        # print(new_branch)
+        for rule in incomplete_rules:
+            if not new_branch:
+                child = root_node.find_first_child(rule[0])
+                if child is not None:
+                    root_node = child
+                else:
+                    root_node = root_node.append_child(rule[0])
+            else:
+                root_node = root_node.append_child(rule[0])
+        root_node.append_child(token.token_str)
 
     def get_parent(self):
         return self.parent
 
-    def find_first_child(self, rule_name: str, text: str | None=None):
+    def find_first_child(self, rule_name: str, recursive: bool=False):
+        if len(self.children) == 0:
+            return None
         for child in self.children:
             if child.rule_name == rule_name:
                 return child
+            elif recursive:
+                result = self.find_first_child(rule_name, recursive)
+                if result is not None:
+                    return result
         return None
-    
+
     def append_child(self, rule_name: str, text: str | None=None):
         node = TreeNode(rule_name, text, self)
         self.children.append(node)
@@ -60,7 +95,7 @@ class TreeNode:
         print("\t" * indent + str(self))
         for child in self.children:
             child.display_tree(indent + 1)
-        
+
     
 """
 [['<stat>', [('<assignorcall>', '!')]],

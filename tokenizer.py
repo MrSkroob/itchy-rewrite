@@ -251,7 +251,7 @@ class Parser:
     def _consume_token(self, token: Token, incomplete_rules: IncompleteRules):
         pass
 
-    def _append_incomplete_rule(self, token: Token, incomplete_rules: IncompleteRules, ast_node: TreeNode, rule_name: str="<stat>") -> int | bool:
+    def _append_incomplete_rule(self, token: Token, incomplete_rules: IncompleteRules, rule_name: str="<stat>") -> int | bool:
         if (rule_name, token) in self.visited:
             # We're stuck in a loop, so this is a lost cause. Return False. 
             # Syntax error!
@@ -284,7 +284,7 @@ class Parser:
                 else:
                     to_append = []
                     
-                    rules_appended = self._append_incomplete_rule(token, to_append, ast_node, rule[0])
+                    rules_appended = self._append_incomplete_rule(token, to_append, rule[0])
                     if rules_appended is not False:
                         if len(to_append) > 0:
                             current_append = options[optional_offset:]
@@ -317,12 +317,13 @@ class Parser:
         if len(incomplete_rules) == 0:
             return
 
-        rule_group = incomplete_rules[-1]
+        rule_group: list[list[Rule]] = incomplete_rules[-1]
 
         if delete_any is True:
-            if len(rule_group) == 2:
-                rule_group.pop(1)
-                return self._delete_finished_rules(incomplete_rules, delete_any)
+            if len(rule_group) > 1:
+                if rule_group[1][0][1] != "!":
+                    incomplete_rules[-1].pop()
+                    return self._delete_finished_rules(incomplete_rules, delete_any)
 
         if len(rule_group) == 1:
             rule_name_popped = rule_group[0]
@@ -347,7 +348,7 @@ class Parser:
                 
             self._delete_finished_rules(incomplete_rules)
 
-    def _handle_optional(self, rule: str, token: Token, unconsumed_rules: list[Rule | list[Rule]], incomplete_rules: IncompleteRules, ast_node: TreeNode):
+    def _handle_optional(self, rule: str, token: Token, unconsumed_rules: list[Rule | list[Rule]], incomplete_rules: IncompleteRules):
         if rule[1] == "!":
             return False
         
@@ -356,7 +357,7 @@ class Parser:
             incomplete_rules.pop()
             
             if len(incomplete_rules) == 0:
-                return self._append_incomplete_rule(token, incomplete_rules, ast_node)
+                return self._append_incomplete_rule(token, incomplete_rules)
 
             incomplete_rules[-1][1].pop(0)
             if len(incomplete_rules[-1][1]) == 0:
@@ -364,7 +365,7 @@ class Parser:
         else:
             incomplete_rules[-1].pop(1)
         self._delete_finished_rules(incomplete_rules)
-        return self._pop_incomplete_rule(token, incomplete_rules, ast_node)
+        return self._pop_incomplete_rule(token, incomplete_rules)
     
     def _completed_rule(self, incomplete_rule: IncompleteRules, incomplete_rules: IncompleteRules):
         if incomplete_rule[1][0][1] in ["!", "?"]:
@@ -374,42 +375,42 @@ class Parser:
         if len(incomplete_rule[1]) == 0:
             incomplete_rules[-1].pop(1)
 
-    def _pop_incomplete_rule(self, token: Token, incomplete_rules: IncompleteRules, ast_node: TreeNode) -> bool | int:
+    def _pop_incomplete_rule(self, token: Token, incomplete_rules: IncompleteRules) -> bool | int:
         if len(incomplete_rules) == 0:
-            return self._append_incomplete_rule(token, incomplete_rules, ast_node)
+            return self._append_incomplete_rule(token, incomplete_rules)
         last_index = len(incomplete_rules) - 1
         incomplete_rule = incomplete_rules[last_index]
 
         unconsumed_rules = incomplete_rule[1:]
 
         if len(unconsumed_rules) == 0:
-            return False
+            return True
 
         rule_tokens = unconsumed_rules[0]
         rule = rule_tokens[0]
 
         if self._is_terminator(rule):
             if not self._check_terminator(rule, token):
-                return self._handle_optional(rule, token, unconsumed_rules, incomplete_rules, ast_node)
+                return self._handle_optional(rule, token, unconsumed_rules, incomplete_rules)
             else:
                 self._completed_rule(incomplete_rule, incomplete_rules)
                 self._delete_finished_rules(incomplete_rules)
                 return True
         else: 
-            rules_appended = self._append_incomplete_rule(token, incomplete_rules, ast_node, rule[0])
+            rules_appended = self._append_incomplete_rule(token, incomplete_rules, rule[0])
             if rules_appended is not False:
                 if rules_appended == 0:
                     self._completed_rule(incomplete_rule, incomplete_rules)
                 # self._completed_rule(incomplete_rule, incomplete_rules)
                 return True
             else:
-                return self._handle_optional(rule, token, unconsumed_rules, incomplete_rules, ast_node)
+                return self._handle_optional(rule, token, unconsumed_rules, incomplete_rules)
 
     def parse(self, tokenizer: Tokenizer) -> True | tuple[Token, Enum]:
         incomplete_rules: IncompleteRules = []
         root_node = TreeNode("<stat>")
 
-        statement_seperator = Token(CompilerRules.StatementSeperator, "\n", (-1, 0))
+        # statement_seperator = Token(CompilerRules.StatementSeperator, "\n", (-1, 0))
 
         for token in tokenizer.token_stream:
             if token[0] is CompilerRules.Comment:
@@ -424,10 +425,9 @@ class Parser:
 
             # AAAAAAAAAAAAAAAAAAAAAAAA
             if len(incomplete_rules) == 0:
-                result = self._append_incomplete_rule(token, incomplete_rules, root_node)
+                result = self._append_incomplete_rule(token, incomplete_rules)
             else:
-                result = self._pop_incomplete_rule(token, incomplete_rules, root_node)
-            
+                result = self._pop_incomplete_rule(token, incomplete_rules)
             root_node.append_ast(incomplete_rules, token)
 
             if not result and len(incomplete_rules) > 0:
@@ -441,7 +441,6 @@ class Parser:
             return token, incomplete_rules[-1][1][0]
         
         root_node.display_tree()
-        walk_tree(root_node)
 
         return True
         # whoop! Syntax checking passed.
@@ -478,6 +477,7 @@ class Compiler:
             next_rule = "' or '".join([i[0][0][0] for i in self.parser.rules[result[1][0]]])
         else:
             next_rule = result[1][0]
+
         print(f"Expected '{next_rule}', got '{token_output}'")
     
     def compile(self):

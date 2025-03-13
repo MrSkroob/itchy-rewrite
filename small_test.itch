@@ -1,3 +1,5 @@
-var unfinished_list
+var boolean
+var into
 
-unfinished_list = [1, 2, 3, 4]
+boolean = true
+into = 0

@@ -1,5 +1,13 @@
 <chunk> ::= {<stat>} [<laststat>]
-<stat> ::= <While> <exp> <wrap> | <If> <exp> <wrap> {<ElseIf> <exp> <wrap>} [<Else> <wrap>] | <For> <Symbol> <forbody> <wrap> | [<NoRefresh>] <Define> <function> | [<Shared>] <Var> <Symbol> | <var> <assignorcall> | <wrap>
+<stat> ::= <whilestat> | <ifstat> | <forstat> | <functionstat> | <vardefstat> | <varassignstat> | <wrap>
+
+<whilestat> ::= <While> <exp> <wrap>
+<ifstat> ::= <If> <exp> <wrap> {<ElseIf> <exp> <wrap>} [<Else> <wrap>]
+<forstat> ::= <For> <Symbol> <forbody> <wrap>
+<functionstat> ::= [<NoRefresh>] <Define> <function>
+<vardefstat> ::= [<Shared>] <Var> <Symbol>
+<varassignstat> ::= <var> <assignorcall>
+
 <assignorcall> ::= <Assign> <exp> | <functioncall>
 <forbody> ::= <Equal> <exp> <FieldSeperator> <exp> <FieldSeperator> <exp> | <In> <var>
 <functioncall> ::= <args> {<args>}
@@ -11,7 +19,7 @@
 <slice> ::= <OpenSquareBracket> <exp> <CloseSquareBracket>
 <exp> ::= <OpenBracket> <equation> <CloseBracket> | <equation>
 <equation> ::= [<Unop>] <literals> {<Binop> <exp>}
-<var> ::= <Symbol> {<Dot> <Symbol>} [<slice>] 
+<var> ::= <Symbol> {<Dot> <Symbol>} [<slice>]
 <literals> ::= <Bool> | <Number> | <String> | <var> [<functioncall>] | <tableconstructor>
 <explist1> ::= <exp> {<FieldSeperator> <explist1>}
 <laststat> ::= <Return> [<explist1>] | <Break>
