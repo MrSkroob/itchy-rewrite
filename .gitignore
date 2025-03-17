@@ -1,3 +1,4 @@
 /.vscode
 parser.py
 small_test.itch
+/.__pycache__
