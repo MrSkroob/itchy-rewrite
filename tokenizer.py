@@ -95,7 +95,6 @@ class Tokenizer:
 # If the rule was non-optional in the first place, it will always have a length of one. 
 # If not, it will be grouped with the rest of its optional members. 
 
-
 def comparitor_factory(rule_name: str, regex_str: str, inverted: bool=False):
     """Returns a function that compares a given token to the regex.
     Returns True on match. 
@@ -247,71 +246,79 @@ class Parser:
         elif rule[0] in self.literals:
             return self.literals[rule[0]](token)
         return False
-    
-    def _consume_token(self, token: Token, incomplete_rules: IncompleteRules):
-        pass
 
-    def _append_incomplete_rule(self, token: Token, incomplete_rules: IncompleteRules, rule_name: str="<stat>") -> int | bool:
+    def _append_incomplete_rule(
+        self, token: Token, incomplete_rules: IncompleteRules, rule_name: str = "<stat>"
+    ) -> int | bool:
+        """
+        Attempt to expand and append incomplete rules based on the given token and rule.
+        
+        Returns the length of the appended token sequence, or False if a loop is detected
+        or no valid expansion exists.
+        """
+        # Prevent infinite recursion by checking if we've already visited this (rule_name, token) pair.
         if (rule_name, token) in self.visited:
-            # We're stuck in a loop, so this is a lost cause. Return False. 
-            # Syntax error!
             return False
         self.visited.add((rule_name, token))
+
+        # Retrieve all possible option sequences for the current rule.
         rules = self.rules
-        for options in rules[rule_name]:
-            optional_offset = 0
-            # EWWWWW
-            options = deepcopy(options)
-            for rule_tokens in options:
+
+        for option_sequence in rules[rule_name]:
+            # Create a deep copy to avoid modifying the original option sequence.
+            option_sequence = deepcopy(option_sequence)
+            for index, rule_tokens in enumerate(option_sequence):
+                # Use the first element of the rule_tokens as the current rule.
                 rule = rule_tokens[0]
                 if self._is_terminator(rule):
                     if self._check_terminator(rule, token):
-                        if rule[1] != "!":
-                            if rule[1] == "?":
-                                to_append = return_slice_or_empty(rule_tokens[1:]) + options[optional_offset + 1:]
-                            elif rule[1] == "*":
-                                to_append = return_slice_or_empty(rule_tokens[1:]) + options[optional_offset:]
-                            else:
-                                raise SyntaxError(f"Unrecognised option type '{rule[1]}'")
-                        else:
-                            to_append = return_slice_or_empty(rule_tokens[1:]) + options[optional_offset + 1:]
-
-                        if len(to_append) > 0:
+                        # Terminator matched; compute the remainder of tokens to append.
+                        to_append = self._compute_to_append(rule, rule_tokens, option_sequence, index)
+                        if to_append:
                             incomplete_rules.append([rule_name] + to_append)
                         return len(to_append)
                     elif rule[1] == "!":
+                        # Mandatory terminator did not match; stop processing this option_sequence.
                         break
                 else:
-                    to_append = []
-                    
-                    rules_appended = self._append_incomplete_rule(token, to_append, rule[0])
-                    if rules_appended is not False:
-                        if len(to_append) > 0:
-                            current_append = options[optional_offset:]
+                    # Recursively try to expand a non-terminator rule.
+                    nested_rules = []
+                    result = self._append_incomplete_rule(token, nested_rules, rule[0])
+                    if result is not False:
+                        # If nested expansion produced tokens, combine them appropriately.
+                        if nested_rules:
+                            current_append = option_sequence[index:]
                         else:
-                            
-                            if rule[1] != "!":
-                                if rule[1] == "?":
-                                    current_append = return_slice_or_empty(rule_tokens[1:]) + options[optional_offset + 1:]
-                                elif rule[1] == "*":
-                                    current_append = return_slice_or_empty(rule_tokens[1:]) + options[optional_offset:]
-                                else:
-                                    raise SyntaxError(f"Unrecognised option type '{rule[1]}'")
-                            else:
-                                current_append = return_slice_or_empty(rule_tokens[1:]) + options[optional_offset + 1:]
-
-                        if len(current_append) > 0:
+                            current_append = self._compute_to_append(rule, rule_tokens, option_sequence, index)
+                        if current_append:
                             incomplete_rules.append([rule_name] + current_append)
-                            if len(to_append) > 0:
-                                
-                                for i in to_append:
-                                    incomplete_rules.append(i)
-
+                            if nested_rules:
+                                incomplete_rules.extend(nested_rules)
                         return len(current_append)
                     if rule[1] == "!":
+                        # Mandatory rule did not expand; break out.
                         break
-                optional_offset += 1
         return False
+
+
+    def _compute_to_append(self, rule: Rule, rule_tokens: list[Rule], option_sequence: list[list[Rule]], index: int) -> list[Rule]:
+        """
+        Compute the list of tokens to append based on the rule's option type.
+        
+        Option type meanings:
+        - "!" : Mandatory rule (must match) – skip the current token and continue with the next.
+        - "?" : Optional rule (1 or 0 occurrences) – skip one token and append the following tokens.
+        - "*" : Repeating rule (0 or more occurrences) – append tokens starting at the current position.
+        """
+        if rule[1] != "!":
+            if rule[1] == "?":
+                return return_slice_or_empty(rule_tokens[1:]) + option_sequence[index + 1:]
+            elif rule[1] == "*":
+                return return_slice_or_empty(rule_tokens[1:]) + option_sequence[index:]
+            else:
+                raise SyntaxError(f"Unrecognised option type '{rule[1]}'")
+        else:
+            return return_slice_or_empty(rule_tokens[1:]) + option_sequence[index + 1:]
     
     def _delete_finished_rules(self, incomplete_rules: IncompleteRules, delete_any: bool=False):
         if len(incomplete_rules) == 0:
@@ -348,16 +355,20 @@ class Parser:
                 
             self._delete_finished_rules(incomplete_rules)
 
-    def _handle_optional(self, rule: str, token: Token, unconsumed_rules: list[Rule | list[Rule]], incomplete_rules: IncompleteRules):
+    def _handle_optional(self, rule: str, token: Token, unconsumed_rules: list[Rule | list[Rule]], incomplete_rules: IncompleteRules, ast: TreeNode):
         if rule[1] == "!":
             return False
         
         if len(unconsumed_rules[1:]) == 0:
+            if len(incomplete_rules) == 1:
+                incomplete_rules.pop()
+                result = self._append_incomplete_rule(token, incomplete_rules)
+                ast.append_ast(incomplete_rules, token)
+                return result
+
+            ast.append_ast(incomplete_rules, token)
             
             incomplete_rules.pop()
-            
-            if len(incomplete_rules) == 0:
-                return self._append_incomplete_rule(token, incomplete_rules)
 
             incomplete_rules[-1][1].pop(0)
             if len(incomplete_rules[-1][1]) == 0:
@@ -365,7 +376,7 @@ class Parser:
         else:
             incomplete_rules[-1].pop(1)
         self._delete_finished_rules(incomplete_rules)
-        return self._pop_incomplete_rule(token, incomplete_rules)
+        return self._pop_incomplete_rule(token, incomplete_rules, ast)
     
     def _completed_rule(self, incomplete_rule: IncompleteRules, incomplete_rules: IncompleteRules):
         if incomplete_rule[1][0][1] in ["!", "?"]:
@@ -375,9 +386,11 @@ class Parser:
         if len(incomplete_rule[1]) == 0:
             incomplete_rules[-1].pop(1)
 
-    def _pop_incomplete_rule(self, token: Token, incomplete_rules: IncompleteRules) -> bool | int:
+    def _pop_incomplete_rule(self, token: Token, incomplete_rules: IncompleteRules, ast: TreeNode) -> bool | int:
         if len(incomplete_rules) == 0:
-            return self._append_incomplete_rule(token, incomplete_rules)
+            result = self._append_incomplete_rule(token, incomplete_rules)
+            ast.append_ast(incomplete_rules, token)
+            return result
         last_index = len(incomplete_rules) - 1
         incomplete_rule = incomplete_rules[last_index]
 
@@ -391,50 +404,43 @@ class Parser:
 
         if self._is_terminator(rule):
             if not self._check_terminator(rule, token):
-                return self._handle_optional(rule, token, unconsumed_rules, incomplete_rules)
+                return self._handle_optional(rule, token, unconsumed_rules, incomplete_rules, ast)
             else:
+                ast.append_ast(incomplete_rules, token)
                 self._completed_rule(incomplete_rule, incomplete_rules)
                 self._delete_finished_rules(incomplete_rules)
                 return True
         else: 
             rules_appended = self._append_incomplete_rule(token, incomplete_rules, rule[0])
             if rules_appended is not False:
+                ast.append_ast(incomplete_rules, token)
                 if rules_appended == 0:
                     self._completed_rule(incomplete_rule, incomplete_rules)
-                # self._completed_rule(incomplete_rule, incomplete_rules)
                 return True
             else:
-                return self._handle_optional(rule, token, unconsumed_rules, incomplete_rules)
+                return self._handle_optional(rule, token, unconsumed_rules, incomplete_rules, ast)
 
     def parse(self, tokenizer: Tokenizer) -> True | tuple[Token, Enum]:
         incomplete_rules: IncompleteRules = []
-        root_node = TreeNode("<stat>")
-
-        # statement_seperator = Token(CompilerRules.StatementSeperator, "\n", (-1, 0))
+        root_node = TreeNode("<prog>", 0)
 
         for token in tokenizer.token_stream:
-            if token[0] is CompilerRules.Comment:
-                continue
-            elif token[0] is CompilerRules.Flag:
-                continue
-            elif token[0] is CompilerRules.StatementSeperator:
-                continue
-            # elif token[0] is CompilerRules.StatementSeperator:
-            #     continue
+            match token[0]:
+                case CompilerRules.Comment:
+                    continue
+                case CompilerRules.Flag:
+                    continue
             self.visited.clear()
 
-            # AAAAAAAAAAAAAAAAAAAAAAAA
             if len(incomplete_rules) == 0:
                 result = self._append_incomplete_rule(token, incomplete_rules)
+                root_node.append_ast(incomplete_rules, token)
             else:
-                result = self._pop_incomplete_rule(token, incomplete_rules)
-            root_node.append_ast(incomplete_rules, token)
+                result = self._pop_incomplete_rule(token, incomplete_rules, root_node)
 
             if not result and len(incomplete_rules) > 0:
                 return token, incomplete_rules[-1][1][0]
-            
-            # self._consume_token(token, incomplete_rules)
-        
+                    
         self._delete_finished_rules(incomplete_rules, True)
             
         if len(incomplete_rules) > 0:
@@ -442,7 +448,7 @@ class Parser:
         
         root_node.display_tree()
 
-        return True
+        return root_node
         # whoop! Syntax checking passed.
 
 
@@ -483,6 +489,8 @@ class Compiler:
     def compile(self):
         result = self.parser.parse(self.tokenizer)
         lines = self.code.split("\n")
-        if result is not True:
+        if type(result) is not TreeNode:
             self.print_syntax_error(lines, result)
-
+        else:
+            # walk_tree(result)
+            pass
