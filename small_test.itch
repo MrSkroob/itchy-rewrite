@@ -1,5 +1,15 @@
-var boolean
-var into
-
 boolean = true
-into = 0
+eek = 4
+
+define foo() {
+    if true and true or false {
+        print("Hello world")
+    } elseif boolean == false {
+        print("Goodbye world")
+    } else {
+        print("Wow.")
+    }
+}
+
+
+foo()

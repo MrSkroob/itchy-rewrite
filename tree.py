@@ -1,18 +1,16 @@
 from __future__ import annotations
+from typing import Any
 from rules import *
 
 
 class TreeNode:
-    new_children_layer = 0
-    prev_layer = 0
-
-    def  __init__(self, rule_name: str, text: str | None=None, parent: TreeNode | None=None):
+    appended_tokens: set[Token] = set()
+    def  __init__(self, rule_name: str, id: int, text: str | None=None, parent: TreeNode | None=None):
         self.rule_name = rule_name
         self.text = text
+        self.id = id
         self.children: list[TreeNode] = []
         self.parent = parent
-        self.layer = parent and (parent.layer + 1) or 0
-
 
     """
     FIXME 
@@ -46,43 +44,53 @@ class TreeNode:
                 =
                 0
     """
+
+
+    """
+    OKAY, SO I'VE FIGURED SOMETHING OUT.
+    WE CAN FIGURE OUT THE EXPECTED NUMBER OF TOKENS FOR EACH NODE BY
+    LOOKING AT THE LENGTH OF THE INCOMPLETE RULE + 1
+    
+    SO ALL WE NEED TO DO IS DO THIS:
+
+    GO DOWN THE LAYERS OF THE TREE. 
+    IF WE ENCOUNTER A NODE THAT ISN'T FULL, WE DO NOT CREATE A NEW BRANCH, AND CONTINUE THERE. 
+    yessssssssssssssss
+    i'm so smort. 
+    """
     def append_ast(self, incomplete_rules: IncompleteRules, token: Token):
+        if token in TreeNode.appended_tokens:
+            return
+        TreeNode.appended_tokens.add(token)
+        if token.token_type is CompilerRules.StatementSeperator:
+            return
         root_node = self
-        if len(incomplete_rules) > 0:
-            token_rule = incomplete_rules[-1][1:][0] # the rule generated after the token matched. 
-            # print(token_rule)
-            new_branch = False
-        else:
-            new_branch = True
-        # print(new_branch)
         for rule in incomplete_rules:
-            if not new_branch:
-                child = root_node.find_first_child(rule[0])
-                if child is not None:
-                    root_node = child
-                else:
-                    root_node = root_node.append_child(rule[0])
-            else:
-                root_node = root_node.append_child(rule[0])
-        root_node.append_child(token.token_str)
+            rule_name = rule[0]
+            rule_id = id(rule)
+            root_node = root_node.find_first_child(rule_id) or root_node.append_child(rule_name, rule_id)
+        root_node.append_child(token.token_str, 0)
+        
 
     def get_parent(self):
         return self.parent
 
-    def find_first_child(self, rule_name: str, recursive: bool=False):
+    def find_first_child(self, node_id: int, recursive: bool=False):
+        if node_id == 0:
+            return None
         if len(self.children) == 0:
             return None
         for child in self.children:
-            if child.rule_name == rule_name:
+            if child.id == node_id:
                 return child
             elif recursive:
-                result = self.find_first_child(rule_name, recursive)
+                result = self.find_first_child(node_id, recursive)
                 if result is not None:
                     return result
         return None
 
-    def append_child(self, rule_name: str, text: str | None=None):
-        node = TreeNode(rule_name, text, self)
+    def append_child(self, rule_name: str, id: int, text: str | None=None):
+        node = TreeNode(rule_name, id, text, self)
         self.children.append(node)
         return node
 

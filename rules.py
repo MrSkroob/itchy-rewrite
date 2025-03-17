@@ -5,12 +5,12 @@ from typing import NamedTuple
 class BNFPreDefined(Enum):
     Number = r"[0-9][_0-9]*(\.[0-9][_0-9]*)?"
     String = r"[a-z0-9]*(\"(?:\\.|[^\\\"])*\"|\'(?:\\.|[^\\'])*\')"
-    Bool = r"(true)|(false)"
+    Bool = r"\b(true)|(false)\b"
     Symbol = r"([a-zA-Z_][a-zA-Z0-9_]*)|\$"
-    Assign = r"=|(\*=)|(\%=)|(\^=)|(\+=)|(-=)|(/=)"
     Binop = r"\+|-|\*|\/|\^|\%|\.{2}|(<=)|<|(>=)|>|(==)|(!=)|(and)|(or)"
+    Assign = r"=|(\*=)|(\%=)|(\^=)|(\+=)|(-=)|(/=)"
     Unop = r"-|(not)"
-    Equal = r"="
+    SingleEqual = r"="
     # Multiply = r"\*="
     # Modulate = r"\%="
     # Exponate = r"\^="
@@ -18,7 +18,7 @@ class BNFPreDefined(Enum):
     # Subtract = "-="
     # Divide = "/="
     # E = r"^$"
-    Type = r"(number)|(string)|(list)|(bool)"
+    Type = r"\b(number)|(string)|(list)|(bool)\b"
     Colon = r":"
     Dot = r"\."
     FieldSeperator = r","
@@ -46,20 +46,23 @@ class BNFRules(Enum):
 
 
 class Keywords(Enum):
-    NoRefresh = r"^(norefresh)$"
-    Define = r"^(define)$"
-    ElseIf = r"^(elseif)$"
-    Return = r"^(return)$"
-    Shared = r"^(shared)$"
-    While = r"^(while)$"
-    Break = r"^(break)$"
-    Else = r"^(else)$"
-    For = r"^(for)$"
-    Var = r"^(var)$"
-    Not = r"^(not)$"
-    Let = r"^(let)$"
-    If = r"^(if)$"
-    In = r"^(in)$"
+    NoRefresh = r"\b(norefresh)\b"
+    Type = r"\b(number|string|list|bool)\b"
+    Bool = r"\b(true)|(false)\b"
+    BoolOp = r"(and)|(or)"
+    Define = r"\b(define)\b"
+    ElseIf = r"\b(elseif)\b"
+    Return = r"\b(return)\b"
+    Shared = r"\b(shared)\b"
+    While = r"\b(while)\b"
+    Break = r"\b(break)\b"
+    Else = r"\b(else)\b"
+    For = r"\b(for)\b"
+    Var = r"\b(var)\b"
+    Not = r"\b(not)\b"
+    Let = r"\b(let)\b"
+    If = r"\b(if)\b"
+    In = r"\b(in)\b"
 
 
 class CompilerRules(Enum):
@@ -68,20 +71,21 @@ class CompilerRules(Enum):
 
     StringLiteral = r"[a-z0-9]*(\"(?:\\.|[^\\\"])*\"|\'(?:\\.|[^\\'])*\')"
 
-    NoRefresh = r"^(norefresh)$"
-    Define = r"^(define)$"
-    ElseIf = r"^(elseif)$"
-    Return = r"^(return)$"
-    Shared = r"^(shared)$"
-    While = r"^(while)$"
-    Break = r"^(break)$"
-    Else = r"^(else)$"
-    For = r"^(for)$"
-    Var = r"^(var)$"
-    Not = r"^(not)$"
-    Let = r"^(let)$"
-    If = r"^(if)$"
-    In = r"^(in)$"
+    NoRefresh = r"\b(norefresh)\b"
+    Type = r"\b(number|string|list|bool)\b"
+    Define = r"\b(define)\b"
+    ElseIf = r"\b(elseif)\b"
+    Return = r"\b(return)\b"
+    Shared = r"\b(shared)\b"
+    While = r"\b(while)\b"
+    Break = r"\b(break)\b"
+    Else = r"\b(else)\b"
+    For = r"\b(for)\b"
+    Var = r"\b(var)\b"
+    Not = r"\b(not)\b"
+    Let = r"\b(let)\b"
+    If = r"\b(if)\b"
+    In = r"\b(in)\b"
 
     Symbol = r"([a-zA-Z_][a-zA-Z0-9_]*)|\$"
     Number = r"[0-9][_0-9]*(\.[0-9][_0-9]*)?"
@@ -93,6 +97,7 @@ class CompilerRules(Enum):
     Add = r"\+="
     Subtract = "-="
     Divide = "/="
+    # Binop = r"\+|-|\*|\/|\^|\%|\.{2}|(<=)|<|(>=)|>|(==)|(!=)|(and)|(or)"
 
     Equal = "=="
     NotEqual = "!="
@@ -100,10 +105,8 @@ class CompilerRules(Enum):
     LessOrEqual = "<="
     MoreThan = ">"
     LessThan = "<"
-
     Assign = "="
-
-    # maths operators
+    # # maths operators
     Modulo = r"\%"
     Power = r"\^"
     Star = r"\*"
@@ -113,7 +116,7 @@ class CompilerRules(Enum):
 
 
     # terminator
-    Colon = ":"
+    # Colon = ":"
     Comma = ","
     Dot = r"\."
     StringJoin = r"\.{2}"
@@ -123,7 +126,7 @@ class CompilerRules(Enum):
     CloseBracket = r"\)"
     CloseSquareBracket = r"\]"
     CloseCurlyBracket = "}"
-    StatementSeperator = r"\n"
+    StatementSeperator = r"\n|;"
 
 
 RuleType = BNFRules | CompilerRules | BNFPreDefined | Keywords
