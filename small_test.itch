@@ -1,15 +1,29 @@
-boolean = true
-eek = 4
+var swapped
+var temp
 
-define foo() {
-    if true and true or false {
-        print("Hello world")
-    } elseif boolean == false {
-        print("Goodbye world")
-    } else {
-        print("Wow.")
+list unsorted_list
+
+unsorted_list = [5, 123, 412]
+
+
+define bubble_sort(arr: list) {
+    n = len(arr)
+    for i = 0, n, 1 {
+        swapped = false
+
+        for j = 0, n - i, 1 {
+            if arr[j] > arr[j + 1] {
+                temp = arr[j]
+                arr[j] = arr[j + 1]
+                arr[j + 1] = arr[j]
+                swapped = true
+            }
+        } 
+        if swapped == false {
+            temp = break
+        }
     }
 }
 
 
-foo()
+bubble_sort(unsorted_list)
