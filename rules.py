@@ -57,6 +57,7 @@ class Keywords(Enum):
     While = r"\b(while)\b"
     Break = r"\b(break)\b"
     Else = r"\b(else)\b"
+    List = r"\b(list)\b"
     For = r"\b(for)\b"
     Var = r"\b(var)\b"
     Not = r"\b(not)\b"
@@ -116,7 +117,7 @@ class CompilerRules(Enum):
 
 
     # terminator
-    # Colon = ":"
+    Colon = ":"
     Comma = ","
     Dot = r"\."
     StringJoin = r"\.{2}"
