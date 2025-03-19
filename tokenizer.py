@@ -1,7 +1,7 @@
 from __future__ import annotations
 import re
 import os
-from tree import TreeNode, walk_tree
+from tree import TreeNode, walk_tree, walk_until_rule, walk_until_token
 from copy import deepcopy
 from bnf_manipulation import de_string
 from pprint import pprint
@@ -374,7 +374,9 @@ class Parser:
             if len(incomplete_rules[-1][1]) == 0:
                 incomplete_rules[-1].pop(1)
         else:
+            ast.append_ast(incomplete_rules, token)
             incomplete_rules[-1].pop(1)
+
         self._delete_finished_rules(incomplete_rules)
         return self._pop_incomplete_rule(token, incomplete_rules, ast)
     
@@ -383,6 +385,7 @@ class Parser:
             incomplete_rule[1].pop(0)
         elif incomplete_rule[1][0][1] == "*":
             incomplete_rule.insert(1, incomplete_rule[1][1:])
+
         if len(incomplete_rule[1]) == 0:
             incomplete_rules[-1].pop(1)
 
@@ -397,6 +400,7 @@ class Parser:
         unconsumed_rules = incomplete_rule[1:]
 
         if len(unconsumed_rules) == 0:
+            incomplete_rules.pop()
             return True
 
         rule_tokens = unconsumed_rules[0]
@@ -431,7 +435,6 @@ class Parser:
                 case CompilerRules.Flag:
                     continue
             self.visited.clear()
-
             if len(incomplete_rules) == 0:
                 result = self._append_incomplete_rule(token, incomplete_rules)
                 root_node.append_ast(incomplete_rules, token)
@@ -442,7 +445,6 @@ class Parser:
                 return token, incomplete_rules[-1][1][0]
                     
         self._delete_finished_rules(incomplete_rules, True)
-            
         if len(incomplete_rules) > 0:
             return token, incomplete_rules[-1][1][0]
         
@@ -485,6 +487,44 @@ class Compiler:
             next_rule = result[1][0]
 
         print(f"Expected '{next_rule}', got '{token_output}'")
+
+    def generate_code(self, ast: TreeNode):
+        # blocks: dict[str] = {}
+        variables: dict[str, str] = {}
+        procedures: dict[str, dict[str, str]] = {}
+        stack = []
+        node_generator = walk_tree(ast)
+        for node in node_generator:
+            stack.append(node)
+            match node.rule_name:
+                case "<vardefstat>":
+                    var_type = next(node_generator).token.token_str
+                    var_name = next(node_generator).token.token_str
+                    variables[var_name] = var_type
+                case "<function>":
+                    function_name = next(node_generator).token.token_str
+                    procedures[function_name] = {}
+                    args: dict[str, str] = {}
+                    if next(node_generator).rule_name == "<funcbody>":
+                        if next(node_generator).rule_name == "<paramlist>":
+                            while True:
+                                arg_name = walk_until_token(node_generator)
+                                next(node_generator)
+                                arg_type = next(node_generator).token.token_str
+
+                                if arg_name in args:
+                                    # raise error
+                                    return
+
+                                args[arg_name] = arg_type
+
+                        procedures[function_name] = args
+        return 
+
+    
+    def print_error(error_info):
+        pass
+                        
     
     def compile(self):
         result = self.parser.parse(self.tokenizer)
@@ -492,5 +532,8 @@ class Compiler:
         if type(result) is not TreeNode:
             self.print_syntax_error(lines, result)
         else:
-            # walk_tree(result)
+            # pass
             pass
+            # success, error = self.generate_code(result)
+            # if not success:
+            #     self.print_error(error)
