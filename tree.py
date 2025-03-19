@@ -1,64 +1,34 @@
 from __future__ import annotations
-from typing import Any
+from typing import Generator, Callable
 from rules import *
 
 
 class TreeNode:
     appended_tokens: set[Token] = set()
-    def  __init__(self, rule_name: str, id: int, text: str | None=None, parent: TreeNode | None=None):
+    def  __init__(self, rule_name: str, id: int, token: Token | None=None, parent: TreeNode | None=None):
         self.rule_name = rule_name
-        self.text = text
+        self.token = token
         self.id = id
         self.children: list[TreeNode] = []
         self.parent = parent
 
-    """
-    FIXME 
-    Gotta work out a way to append child nodes to the correct layer...
 
-    So let's say we have something like this:
-
-    var boolean
-    var integer
-
-    boolean = true
-    integer = 0
-
-    ideally the ast would look like this:
-
-    <stat>
-        <vardefstat> 
-            var
-            boolean
-        <vardefstat>
-            var
-            integer
-        <varassignstat>
-            boolean
-            <assignorcall>
-                =
-                true
-        <varassignstat>
-            integer
-            <assignorcall>
-                =
-                0
-    """
-
-
-    """
-    OKAY, SO I'VE FIGURED SOMETHING OUT.
-    WE CAN FIGURE OUT THE EXPECTED NUMBER OF TOKENS FOR EACH NODE BY
-    LOOKING AT THE LENGTH OF THE INCOMPLETE RULE + 1
-    
-    SO ALL WE NEED TO DO IS DO THIS:
-
-    GO DOWN THE LAYERS OF THE TREE. 
-    IF WE ENCOUNTER A NODE THAT ISN'T FULL, WE DO NOT CREATE A NEW BRANCH, AND CONTINUE THERE. 
-    yessssssssssssssss
-    i'm so smort. 
-    """
     def append_ast(self, incomplete_rules: IncompleteRules, token: Token):
+        match token.token_type:
+            case CompilerRules.OpenCurlyBracket:
+                return
+            case CompilerRules.CloseCurlyBracket:
+                return
+            case CompilerRules.OpenSquareBracket:
+                return
+            case CompilerRules.CloseSquareBracket:
+                return
+            case CompilerRules.OpenBracket:
+                return
+            case CompilerRules.CloseBracket:
+                return
+            case CompilerRules.Comma:
+                return
         if token in TreeNode.appended_tokens:
             return
         TreeNode.appended_tokens.add(token)
@@ -69,11 +39,7 @@ class TreeNode:
             rule_name = rule[0]
             rule_id = id(rule)
             root_node = root_node.find_first_child(rule_id) or root_node.append_child(rule_name, rule_id)
-        root_node.append_child(token.token_str, 0)
-        
-
-    def get_parent(self):
-        return self.parent
+        root_node.append_child(token.token_str, 0, token)
 
     def find_first_child(self, node_id: int, recursive: bool=False):
         if node_id == 0:
@@ -89,14 +55,14 @@ class TreeNode:
                     return result
         return None
 
-    def append_child(self, rule_name: str, id: int, text: str | None=None):
-        node = TreeNode(rule_name, id, text, self)
+    def append_child(self, rule_name: str, id: int, token: Token | None=None):
+        node = TreeNode(rule_name, id, token, self)
         self.children.append(node)
         return node
 
     def __repr__(self):
-        if self.text is not None:
-            return str((self.rule_name, self.text))
+        if self.token is not None:
+            return self.token.token_str
         return self.rule_name
     
     def display_tree(self, indent: int=0):
@@ -133,11 +99,26 @@ def append_ast(start_node: TreeNode, incomplete_rules: IncompleteRules):
         # if start_node.rule_name == rule_name
 
 
-def walk_tree(start_node: TreeNode):
+def walk_tree(start_node: TreeNode, root_call: bool=True) -> Generator[TreeNode]:
     children = start_node.children
-    print(start_node)
+    yield start_node
     for child in children:
-        walk_tree(child)
+        yield from walk_tree(child, False)
+
+
+def walk_until_condition(node_generator: Generator[TreeNode], condition: Callable[[TreeNode], bool]):
+    for node in node_generator:
+        if condition(node):
+            return node
+    return None
+
+
+def walk_until_token(node_generator: Generator[TreeNode]):
+    return walk_until_condition(node_generator, lambda x: x.token is not None)
+
+
+def walk_until_rule(node_generator: Generator[TreeNode], rule_name: str):
+    return walk_until_condition(node_generator, lambda x: x.rule_name == rule_name)
 
 
 if __name__ == "__main__":
