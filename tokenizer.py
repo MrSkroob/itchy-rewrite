@@ -35,32 +35,19 @@ class Tokenizer:
             rule = enum.value
             match_objs: Iterator[re.Match[str]] = re.finditer(rule, line)
             for match_obj in match_objs:
-                match enum:
-                    # if we match a comment or flag, we skip the entire line.
-                    # comments can be simply ignored.
-                    # flags are simple hard coded features that which we can use to 
-                    # decide whether a function waits for screen refresh or not. 
-                    case self.rules.Comment:
-                        yield Token(self.rules.Comment, line[2:], (line_number, 0))
-                        return 
-                    case self.rules.Flag:
-                        yield Token(self.rules.Flag, line[3:], (line_number, 0))
-                        return
-                    case _: # type: ignore
+                # i don't know why,
+                # but group(0) is not included in .groups()?
+                for i in range(len((match_obj.group(0),) + match_obj.groups())):
+                    # if we've already matched this entire word before, skip.
+                    if within_span(spans, match_obj.span(i)):
+                        continue
 
-                        # i don't know why,
-                        # but group(0) is not included in .groups()?
-                        for i in range(len((match_obj.group(0),) + match_obj.groups())):
-                            # if we've already matched this entire word before, skip.
-                            if within_span(spans, match_obj.span(i)):
-                                continue
-
-                            if match_obj.group(i) is None:
-                                continue
-                            
-                            # appends the matches found, with the third index being the position we found it in.
-                            matches.append((enum, match_obj.group(i), match_obj.span(i)))
-                            spans.append(match_obj.span(i))
+                    if match_obj.group(i) is None:
+                        continue
+                    
+                    # appends the matches found, with the third index being the position we found it in.
+                    matches.append((enum, match_obj.group(i), match_obj.span(i)))
+                    spans.append(match_obj.span(i))
 
         # we sort the matches found by the position we find it in, so whenever we call
         # next() on this iterator, we'll get the next token in chronological order.
@@ -467,16 +454,10 @@ class Compiler:
         bnf_parser.generate()
         self.parser = Parser(bnf_parser)
         self.code = code
+        self.lines = self.code.split("\n")
         self.tokenizer = Tokenizer(code, CompilerRules)
 
-    def print_syntax_error(self, lines: list[str], result: tuple[Token, Enum]):
-        line_number = result[0][2][0]
-        if line_number == -1:
-            line_number = len(lines) - 1
-
-        print("  Syntax Error in:", self.code_path, "line", line_number + 1)
-        print("\t" + lines[line_number])
-        print("\t" + " " * result[0][2][1] + "^HERE")
+    def get_next_expected_rule(self, result: tuple[Token, Enum]):
         token_output = result[0][1]
         if result[0][0] is CompilerRules.StatementSeperator:
             token_output = "\\n"
@@ -486,12 +467,26 @@ class Compiler:
         else:
             next_rule = result[1][0]
 
-        print(f"Expected '{next_rule}', got '{token_output}'")
+        error_msg = f"Expected '{next_rule}', got '{token_output}'"
+        return error_msg
 
-    def generate_code(self, ast: TreeNode):
+    def print_error(self, error: CompilerError):
+        lines = error.lines
+        token = error.offending_token
+        line_number = token.location[0]
+
+        print(f"  {error.error_type} in:", self.code_path, "line", line_number + 1)
+        print("\t" + lines[line_number])
+        print("\t" + " " * token.location[1] + "^HERE")
+        print("  " + error.error_msg)
+
+    def generate_code(self, ast: TreeNode) -> tuple[bool, list[CompilerError]]:
         # blocks: dict[str] = {}
-        variables: dict[str, str] = {}
-        procedures: dict[str, dict[str, str]] = {}
+        warnings: list[CompilerError] = []
+        variables: dict[str, tuple[str, Token]] = {}
+        procedures: dict[str, tuple[Token, dict[str, str]]] = {}
+        temp_variables: dict[str, tuple[str, Token]]
+        current_wrap = 0
         stack = []
         node_generator = walk_tree(ast)
         for node in node_generator:
@@ -499,41 +494,80 @@ class Compiler:
             match node.rule_name:
                 case "<vardefstat>":
                     var_type = next(node_generator).token.token_str
-                    var_name = next(node_generator).token.token_str
-                    variables[var_name] = var_type
+                    var_name = next(node_generator).token
+                    if var_name.token_str in variables:
+                        warning = CompilerError("Duplicate Declaration Warning",
+                                                self.lines,
+                                                var_name,
+                                                f"You have already defined a variable with the same name on line {variables[var_name.token_str][1].location[0] + 1}.")
+                        warnings.append(warning)
+
+                    variables[var_name.token_str] = (var_type, var_name)
+                case "<varassignstat>":
+                    next(node_generator)
+                    var_name = next(node_generator).token
+                    operator = next(node_generator).token
+                    if var_name.token_str not in variables:
+                        error = CompilerError("Name Error",
+                                                self.lines,
+                                                var_name,
+                                                f"Name '{var_name.token_str}' is not defined.",
+                                                self.code_path)
+                        return False, [error]
                 case "<function>":
-                    function_name = next(node_generator).token.token_str
-                    procedures[function_name] = {}
+                    function_name = next(node_generator).token
                     args: dict[str, str] = {}
+                    procedures[function_name.token_str] = (function_name, args)
                     if next(node_generator).rule_name == "<funcbody>":
                         if next(node_generator).rule_name == "<paramlist>":
                             while True:
-                                arg_name = walk_until_token(node_generator)
+                                arg_name = walk_until_token(node_generator).token
                                 next(node_generator)
                                 arg_type = next(node_generator).token.token_str
-
-                                if arg_name in args:
+                                if arg_name.token_str in args:
                                     # raise error
-                                    return
+                                    error = CompilerError("Name Error",
+                                                            self.lines,
+                                                            arg_name,
+                                                            f"Duplicate '{arg_name.token_str}' argument.",
+                                                            self.code_path)
+                                    return False, [error]
 
-                                args[arg_name] = arg_type
+                                args[arg_name.token_str] = arg_type
+                                if next(node_generator).rule_name == "<wrap>":
+                                    current_wrap += 1
+                                    break
 
-                        procedures[function_name] = args
-        return 
-
-    
-    def print_error(error_info):
-        pass
+        return True, warnings
                         
     
     def compile(self):
         result = self.parser.parse(self.tokenizer)
-        lines = self.code.split("\n")
         if type(result) is not TreeNode:
-            self.print_syntax_error(lines, result)
+            error_msg = self.get_next_expected_rule(result)
+            error = CompilerError(
+                "Syntax Error", 
+                self.lines,
+                result[0],
+                error_msg,
+                self.code_path)
+            
+            self.print_error(error)
+            return
+            # self.print_syntax_error(lines, result)
         else:
             # pass
-            pass
-            # success, error = self.generate_code(result)
-            # if not success:
-            #     self.print_error(error)
+            # pass
+            success, errors = self.generate_code(result)
+            if not success:
+                self.print_error(errors[0])
+            else:
+                if len(errors) > 0:
+                    print("""
+The compiler encountered some potential issues.
+Your code will still run, but it's likely you will encounter unexpected behaviour.
+If you want these to halt compilation, add the '--!strict' flag at the top of your file.
+If you want to ignore these warnings, add the '--!nonstrict' flag at the top of your file.
+                          """)
+                    for i in errors:
+                        self.print_error(i)

@@ -1,4 +1,5 @@
 from enum import Enum
+from dataclasses import dataclass
 from typing import NamedTuple
 
 
@@ -32,8 +33,8 @@ class BNFPreDefined(Enum):
 
 
 class BNFRules(Enum):
-    Flag = "--!"
-    Comment = "//"
+    Flag = "^--!"
+    Comment = r"^//"
     Assign = "::="
     CurlyBrackets = r"(?<!\")\{(.*?)\}(?!\")"
     SquareBrackets = r"(?<!\")\[(.*?)\](?!\")"
@@ -67,8 +68,8 @@ class Keywords(Enum):
 
 
 class CompilerRules(Enum):
-    Flag = "--!"
-    Comment = "//"
+    Flag = r"--!.*"
+    Comment = r"//.*"
 
     StringLiteral = r"[a-z0-9]*(\"(?:\\.|[^\\\"])*\"|\'(?:\\.|[^\\'])*\')"
 
@@ -135,3 +136,12 @@ OptionalStr = str | None
 Token = NamedTuple("Token", (("token_type", RuleType), ("token_str", str), ("location", tuple[int, int])))
 Rule = NamedTuple("Rule", (("rule", str), ("optional", str)))
 IncompleteRules = list[list[list[Rule]]]
+
+
+@dataclass
+class CompilerError:
+    error_type: str
+    lines: list[str]
+    offending_token: Token
+    error_msg: str=""
+    file: str=""
