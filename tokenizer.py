@@ -293,9 +293,9 @@ class Parser:
         Compute the list of tokens to append based on the rule's option type.
         
         Option type meanings:
-        - "!" : Mandatory rule (must match) – skip the current token and continue with the next.
-        - "?" : Optional rule (1 or 0 occurrences) – skip one token and append the following tokens.
-        - "*" : Repeating rule (0 or more occurrences) – append tokens starting at the current position.
+        - "!" : Mandatory rule (must match) - skip the current token and continue with the next.
+        - "?" : Optional rule (1 or 0 occurrences) - skip one token and append the following tokens.
+        - "*" : Repeating rule (0 or more occurrences) - append tokens starting at the current position.
         """
         if rule[1] != "!":
             if rule[1] == "?":
