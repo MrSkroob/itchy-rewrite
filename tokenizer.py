@@ -4,12 +4,12 @@ import os
 from tree import TreeNode, walk_tree, walk_until_rule, walk_until_token
 from copy import deepcopy
 from bnf_manipulation import de_string
-from pprint import pprint
-from typing import Iterator, Callable
+# from pprint import pprint
+from typing import Iterator
 from rules import *
 
 
-def within_span(spans: list[list[int, int]], span: list[int, int]) -> bool:
+def within_span(spans: list[tuple[int, int]], span: tuple[int, int]) -> bool:
     """
     Returns if a given span is encompassed within a list of spans. 
     """
@@ -35,7 +35,7 @@ class Tokenizer:
             rule = enum.value
             match_objs: Iterator[re.Match[str]] = re.finditer(rule, line)
             for match_obj in match_objs:
-                # i don't know why,
+                # I don't know why,
                 # but group(0) is not included in .groups()?
                 for i in range(len((match_obj.group(0),) + match_obj.groups())):
                     # if we've already matched this entire word before, skip.
@@ -44,7 +44,7 @@ class Tokenizer:
 
                     if match_obj.group(i) is None:
                         continue
-                    
+
                     # appends the matches found, with the third index being the position we found it in.
                     matches.append((enum, match_obj.group(i), match_obj.span(i)))
                     spans.append(match_obj.span(i))
@@ -64,7 +64,7 @@ class Tokenizer:
                 return next(self.token_stream)
             except StopIteration:
                 return None
-    
+
     # compiler can give back the token once it's finished with it. 
     def return_token(self, token: Token):
         self.returned_tokens.insert(0, token)
@@ -77,25 +77,25 @@ class Tokenizer:
             yield Token(self.rules.StatementSeperator, "\n", (line_number, 0))
 
 
-
-# Each rule is grouped. 
+# Each rule is grouped.
 # If the rule was non-optional in the first place, it will always have a length of one. 
 # If not, it will be grouped with the rest of its optional members. 
 
-def comparitor_factory(rule_name: str, regex_str: str, inverted: bool=False):
+def comparator_factory(regex_str: str, inverted: bool = False):
     """Returns a function that compares a given token to the regex.
     Returns True on match. 
     """
     regex = re.compile(regex_str)
 
-    def compare(token: tuple[BNFRules, str]):
-        
-        match_obj = re.match(regex, token[1])
-        return (match_obj is not None) and not inverted    
+    def compare(token: Token):
+        # In hindsight, I could simply compare the .token_type instead of using regex.
+        match_obj = re.match(regex, token.token_str)
+        return (match_obj is not None) and not inverted
+
     return compare
 
 
-def match_groups(rule_name: str, regex_strs: list[BNFPreDefined], inverted: bool=False):
+def match_groups(regex_strs: RuleType, inverted: bool = False):
     """Returns a function that compares a given token to multiple rules at once. 
     Returns True if all match. 
     """
@@ -104,11 +104,11 @@ def match_groups(rule_name: str, regex_strs: list[BNFPreDefined], inverted: bool
         compiled.append(re.compile(i.value))
 
     def compare(token: Token):
-        for i in compiled:
-            if re.match(i, token[1]) is not None:
+        for j in compiled:
+            if re.match(j, token[1]) is not None:
                 return not inverted
         return inverted
-    
+
     return compare
 
 
@@ -117,6 +117,24 @@ def return_slice_or_empty(list_part):
         return [list_part]
     else:
         return []
+
+
+def _handle_rule_optionals(optional_str: str, optional_type: str):
+    # The tokenizer consider optional rules as a singular rule.
+    # As such, we create another tokenizer specifically for this inner section.
+
+    # So we append into another list where the first rule will specify what type of optional it is.
+    optionals = []
+    for i in Tokenizer(optional_str, BNFRules).token_stream:
+        token_type = i[0]
+        token_str = i[1]
+        if token_type is BNFRules.StringLiteral:
+            optionals.append((comparator_factory(de_string(token_str)), optional_type))
+            optional_type = "!"
+        elif token_type is BNFRules.Rule:
+            optionals.append((token_str, optional_type))
+            optional_type = "!"
+    return optionals
 
 
 class BNFParser:
@@ -128,7 +146,7 @@ class BNFParser:
         self.rules: dict[str, IncompleteRules] = {}
         self.literals: dict[str, Callable[[Token], bool]] = {}
         self.visited: set[tuple[str, Token]] = set()
-        self.tokenizer = Tokenizer(grammar, BNFRules)     
+        self.tokenizer = Tokenizer(grammar, BNFRules)
 
         # we compile some regex for building blocks.
         # these are for any rules in the bnf file that starts with a capital letter. 
@@ -136,61 +154,45 @@ class BNFParser:
         # e.g. Numbers, Symbols, Booleans, etc.
         for existing_rule in BNFPreDefined:
             self._create_pre_defined_rule(existing_rule)
-        
+
         for keyword in Keywords:
             self._create_pre_defined_rule(keyword)
-            
+
     def _create_pre_defined_rule(self, rule: RuleType):
         if rule is BNFPreDefined.Symbol:
-            rule_name = rule.name
             rule_value = rule.value
+
             def compare_name(token: Token):
-                return comparitor_factory(rule_name, rule_value)(token) and match_groups(rule_name, Keywords, True)(token)
+                return comparator_factory(rule_value)(token) and match_groups(Keywords, True)(
+                    token)
 
             self.literals["<" + rule.name + ">"] = compare_name
         else:
-            self.literals["<" + rule.name + ">"] = comparitor_factory(rule.name, rule.value)
-
-    def _handle_rule_optionals(self, optional_str: str, optional_type: str):
-        # The tokenizer consider optional rules as a singular rule. 
-        # As such, we create another tokenizer specifically for this inner section. 
-
-        # So we append into another list where the first rule will specify what type of optional it is. 
-        optionals = []
-        for i in Tokenizer(optional_str, BNFRules).token_stream:
-            token_type = i[0]
-            token_str = i[1]
-            if token_type is BNFRules.StringLiteral:                
-                optionals.append((comparitor_factory(de_string(token_str), de_string(token_str)), optional_type))
-                optional_type = "!"
-            elif token_type is BNFRules.Rule:
-                optionals.append((token_str, optional_type))
-                optional_type = "!"
-        return optionals
+            self.literals["<" + rule.name + ">"] = comparator_factory(rule.value)
 
     def _new_rule(self, name: str):
         token = self.tokenizer.get_next_token()
         if token is None:
             return
-        
+
         token_type = token[0]
         token_str = token[1]
 
         if token_type is BNFRules.StatementSeperator:
             return
-        
-        if not token_type is BNFRules.Pipe:
+
+        if token_type is not BNFRules.Pipe:
             if token_type is BNFRules.StringLiteral:
-                self.rules[name][-1].append([(comparitor_factory(name, de_string(token_str)), "!")])
+                self.rules[name][-1].append([(comparator_factory(de_string(token_str)), "!")])
             elif token_type is BNFRules.CurlyBrackets:
-                self.rules[name][-1].append(self._handle_rule_optionals(token_str[1:-1], "*"))
+                self.rules[name][-1].append(_handle_rule_optionals(token_str[1:-1], "*"))
             elif token_type is BNFRules.SquareBrackets:
-                self.rules[name][-1].append(self._handle_rule_optionals(token_str[1:-1], "?"))
+                self.rules[name][-1].append(_handle_rule_optionals(token_str[1:-1], "?"))
             else:
                 self.rules[name][-1].append([(token_str, "!")])
         elif len(self.rules[name][-1]) > 0:
             self.rules[name].append([])
-            
+
         self._new_rule(name)
 
     def generate(self):
@@ -201,7 +203,7 @@ class BNFParser:
             token = self.tokenizer.get_next_token()
             if token is None:
                 break
-            token_str = token[1]    
+            token_str = token[1]
             if token[0] is BNFRules.StatementSeperator:
                 continue
 
@@ -214,13 +216,44 @@ class BNFParser:
                 self.tokenizer.return_token(next_token)
 
 
+def _completed_rule(incomplete_rule: list[list[Rule]], incomplete_rules: IncompleteRules):
+    if incomplete_rule[1][0][1] in ["!", "?"]:
+        incomplete_rule[1].pop(0)
+    elif incomplete_rule[1][0][1] == "*":
+        incomplete_rule.insert(1, incomplete_rule[1][1:])
+
+    if len(incomplete_rule[1]) == 0:
+        incomplete_rules[-1].pop(1)
+
+
+def _compute_to_append(rule: Rule, rule_tokens: list[Rule], option_sequence: list[list[Rule]], index: int) -> \
+        list[list[Rule]]:
+    """
+    Compute the list of tokens to append based on the rule's option type.
+
+    Option type meanings:
+    - "!" : Mandatory rule (must match) - skip the current token and continue with the next.
+    - "?" : Optional rule (1 or 0 occurrences) - skip one token and append the following tokens.
+    - "*" : Repeating rule (0 or more occurrences) - append tokens starting at the current position.
+    """
+    if rule[1] != "!":
+        if rule[1] == "?":
+            return return_slice_or_empty(rule_tokens[1:]) + option_sequence[index + 1:]
+        elif rule[1] == "*":
+            return return_slice_or_empty(rule_tokens[1:]) + option_sequence[index:]
+        else:
+            raise SyntaxError(f"Unrecognised option type '{rule[1]}'")
+    else:
+        return return_slice_or_empty(rule_tokens[1:]) + option_sequence[index + 1:]
+
+
 class Parser:
     def __init__(self, bnf_parser: BNFParser):
         self.rules: dict[str, IncompleteRules] = bnf_parser.rules
         self.literals: dict[str, Callable] = bnf_parser.literals
         self.visited: set[tuple[str, Token]] = set()
 
-    def _is_terminator(self, rule: Rule):
+    def is_terminator(self, rule: Rule):
         if callable(rule[0]):
             return True
         elif rule[0] in self.literals:
@@ -235,7 +268,7 @@ class Parser:
         return False
 
     def _append_incomplete_rule(
-        self, token: Token, incomplete_rules: IncompleteRules, rule_name: str = "<stat>"
+            self, token: Token, incomplete_rules: IncompleteRules, rule_name: str = "<stat>"
     ) -> int | bool:
         """
         Attempt to expand and append incomplete rules based on the given token and rule.
@@ -257,10 +290,10 @@ class Parser:
             for index, rule_tokens in enumerate(option_sequence):
                 # Use the first element of the rule_tokens as the current rule.
                 rule = rule_tokens[0]
-                if self._is_terminator(rule):
+                if self.is_terminator(rule):
                     if self._check_terminator(rule, token):
                         # Terminator matched; compute the remainder of tokens to append.
-                        to_append = self._compute_to_append(rule, rule_tokens, option_sequence, index)
+                        to_append = _compute_to_append(rule, rule_tokens, option_sequence, index)
                         if to_append:
                             incomplete_rules.append([rule_name] + to_append)
                         return len(to_append)
@@ -276,7 +309,7 @@ class Parser:
                         if nested_rules:
                             current_append = option_sequence[index:]
                         else:
-                            current_append = self._compute_to_append(rule, rule_tokens, option_sequence, index)
+                            current_append = _compute_to_append(rule, rule_tokens, option_sequence, index)
                         if current_append:
                             incomplete_rules.append([rule_name] + current_append)
                             if nested_rules:
@@ -287,27 +320,7 @@ class Parser:
                         break
         return False
 
-
-    def _compute_to_append(self, rule: Rule, rule_tokens: list[Rule], option_sequence: list[list[Rule]], index: int) -> list[Rule]:
-        """
-        Compute the list of tokens to append based on the rule's option type.
-        
-        Option type meanings:
-        - "!" : Mandatory rule (must match) - skip the current token and continue with the next.
-        - "?" : Optional rule (1 or 0 occurrences) - skip one token and append the following tokens.
-        - "*" : Repeating rule (0 or more occurrences) - append tokens starting at the current position.
-        """
-        if rule[1] != "!":
-            if rule[1] == "?":
-                return return_slice_or_empty(rule_tokens[1:]) + option_sequence[index + 1:]
-            elif rule[1] == "*":
-                return return_slice_or_empty(rule_tokens[1:]) + option_sequence[index:]
-            else:
-                raise SyntaxError(f"Unrecognised option type '{rule[1]}'")
-        else:
-            return return_slice_or_empty(rule_tokens[1:]) + option_sequence[index + 1:]
-    
-    def _delete_finished_rules(self, incomplete_rules: IncompleteRules, delete_any: bool=False):
+    def _delete_finished_rules(self, incomplete_rules: IncompleteRules, delete_any: bool = False):
         if len(incomplete_rules) == 0:
             return
 
@@ -326,26 +339,29 @@ class Parser:
             if len(incomplete_rules) == 0:
                 return
 
-            if incomplete_rules[-1][1][0][0] == rule_name_popped and (incomplete_rules[-1][1][0][1] == "!" or delete_any):
+            if incomplete_rules[-1][1][0][0] == rule_name_popped and (
+                    incomplete_rules[-1][1][0][1] == "!" or delete_any):
                 incomplete_rules[-1][1].pop(0)
                 if len(incomplete_rules[-1][1]) == 0:
                     incomplete_rules[-1].pop(1)
                 if len(incomplete_rules) == 0:
                     return
-                if len(incomplete_rules[-1]) == 2 and incomplete_rules[-1][1][0][0] == rule_name_popped and (incomplete_rules[-1][1][0][1] == "!" or delete_any):
+                if len(incomplete_rules[-1]) == 2 and incomplete_rules[-1][1][0][0] == rule_name_popped and (
+                        incomplete_rules[-1][1][0][1] == "!" or delete_any):
                     incomplete_rules[-1][1].pop(0)
                     if len(incomplete_rules[-1][1]) == 0:
                         incomplete_rules[-1].pop(1)
-            
+
             if len(incomplete_rules) == 0:
                 return
-                
+
             self._delete_finished_rules(incomplete_rules)
 
-    def _handle_optional(self, rule: str, token: Token, unconsumed_rules: list[Rule | list[Rule]], incomplete_rules: IncompleteRules, ast: TreeNode):
+    def _handle_optional(self, rule: Rule, token: Token, unconsumed_rules: list[Rule | list[Rule]],
+                         incomplete_rules: IncompleteRules, ast: TreeNode):
         if rule[1] == "!":
             return False
-        
+
         if len(unconsumed_rules[1:]) == 0:
             if len(incomplete_rules) == 1:
                 incomplete_rules.pop()
@@ -354,7 +370,7 @@ class Parser:
                 return result
 
             ast.append_ast(incomplete_rules, token)
-            
+
             incomplete_rules.pop()
 
             incomplete_rules[-1][1].pop(0)
@@ -366,15 +382,6 @@ class Parser:
 
         self._delete_finished_rules(incomplete_rules)
         return self._pop_incomplete_rule(token, incomplete_rules, ast)
-    
-    def _completed_rule(self, incomplete_rule: IncompleteRules, incomplete_rules: IncompleteRules):
-        if incomplete_rule[1][0][1] in ["!", "?"]:
-            incomplete_rule[1].pop(0)
-        elif incomplete_rule[1][0][1] == "*":
-            incomplete_rule.insert(1, incomplete_rule[1][1:])
-
-        if len(incomplete_rule[1]) == 0:
-            incomplete_rules[-1].pop(1)
 
     def _pop_incomplete_rule(self, token: Token, incomplete_rules: IncompleteRules, ast: TreeNode) -> bool | int:
         if len(incomplete_rules) == 0:
@@ -393,27 +400,29 @@ class Parser:
         rule_tokens = unconsumed_rules[0]
         rule = rule_tokens[0]
 
-        if self._is_terminator(rule):
+        if self.is_terminator(rule):
             if not self._check_terminator(rule, token):
                 return self._handle_optional(rule, token, unconsumed_rules, incomplete_rules, ast)
             else:
                 ast.append_ast(incomplete_rules, token)
-                self._completed_rule(incomplete_rule, incomplete_rules)
+                _completed_rule(incomplete_rule, incomplete_rules)
                 self._delete_finished_rules(incomplete_rules)
                 return True
-        else: 
+        else:
             rules_appended = self._append_incomplete_rule(token, incomplete_rules, rule[0])
             if rules_appended is not False:
                 ast.append_ast(incomplete_rules, token)
                 if rules_appended == 0:
-                    self._completed_rule(incomplete_rule, incomplete_rules)
+                    _completed_rule(incomplete_rule, incomplete_rules)
                 return True
             else:
                 return self._handle_optional(rule, token, unconsumed_rules, incomplete_rules, ast)
 
-    def parse(self, tokenizer: Tokenizer) -> True | tuple[Token, Enum]:
+    def parse(self, tokenizer: Tokenizer) -> TreeNode | tuple[Token, Rule]:
         incomplete_rules: IncompleteRules = []
         root_node = TreeNode("<prog>", 0)
+
+        token = None
 
         for token in tokenizer.token_stream:
             match token[0]:
@@ -430,11 +439,11 @@ class Parser:
 
             if not result and len(incomplete_rules) > 0:
                 return token, incomplete_rules[-1][1][0]
-                    
+
         self._delete_finished_rules(incomplete_rules, True)
         if len(incomplete_rules) > 0:
             return token, incomplete_rules[-1][1][0]
-        
+
         root_node.display_tree()
 
         return root_node
@@ -457,12 +466,12 @@ class Compiler:
         self.lines = self.code.split("\n")
         self.tokenizer = Tokenizer(code, CompilerRules)
 
-    def get_next_expected_rule(self, result: tuple[Token, Enum]):
+    def get_next_expected_rule(self, result: tuple[Token, Rule]):
         token_output = result[0][1]
         if result[0][0] is CompilerRules.StatementSeperator:
             token_output = "\\n"
 
-        if not self.parser._is_terminator((result[1][0], 0)):
+        if not self.parser.is_terminator(result[1][0]):  # type: ignore
             next_rule = "' or '".join([i[0][0][0] for i in self.parser.rules[result[1][0]]])
         else:
             next_rule = result[1][0]
@@ -499,20 +508,21 @@ class Compiler:
                         warning = CompilerError("Duplicate Declaration Warning",
                                                 self.lines,
                                                 var_name,
-                                                f"You have already defined a variable with the same name on line {variables[var_name.token_str][1].location[0] + 1}.")
+                                                f"You have already defined a variable with the same name on line "
+                                                f"{variables[var_name.token_str][1].location[0] + 1}.")
                         warnings.append(warning)
 
                     variables[var_name.token_str] = (var_type, var_name)
                 case "<varassignstat>":
                     next(node_generator)
                     var_name = next(node_generator).token
-                    operator = next(node_generator).token
+                    # operator = next(node_generator).token
                     if var_name.token_str not in variables:
                         error = CompilerError("Name Error",
-                                                self.lines,
-                                                var_name,
-                                                f"Name '{var_name.token_str}' is not defined.",
-                                                self.code_path)
+                                              self.lines,
+                                              var_name,
+                                              f"Name '{var_name.token_str}' is not defined.",
+                                              self.code_path)
                         return False, [error]
                 case "<function>":
                     function_name = next(node_generator).token
@@ -527,10 +537,10 @@ class Compiler:
                                 if arg_name.token_str in args:
                                     # raise error
                                     error = CompilerError("Name Error",
-                                                            self.lines,
-                                                            arg_name,
-                                                            f"Duplicate '{arg_name.token_str}' argument.",
-                                                            self.code_path)
+                                                          self.lines,
+                                                          arg_name,
+                                                          f"Duplicate '{arg_name.token_str}' argument.",
+                                                          self.code_path)
                                     return False, [error]
 
                                 args[arg_name.token_str] = arg_type
@@ -539,24 +549,21 @@ class Compiler:
                                     break
 
         return True, warnings
-                        
-    
+
     def compile(self):
         result = self.parser.parse(self.tokenizer)
         if type(result) is not TreeNode:
             error_msg = self.get_next_expected_rule(result)
             error = CompilerError(
-                "Syntax Error", 
+                "Syntax Error",
                 self.lines,
                 result[0],
                 error_msg,
                 self.code_path)
-            
+
             self.print_error(error)
             return
-            # self.print_syntax_error(lines, result)
         else:
-            # pass
             # pass
             success, errors = self.generate_code(result)
             if not success:

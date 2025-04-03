@@ -25,7 +25,7 @@ def is_literal(c: str):
     return c[0] == "'" and c[-1] == "'" and len(c) > 1
 
 
-def de_string(c: str):
+def de_string(c: str) -> str:
     return c[1:-1]
 
 

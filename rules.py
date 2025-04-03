@@ -1,6 +1,6 @@
 from enum import Enum
 from dataclasses import dataclass
-from typing import NamedTuple
+from typing import NamedTuple, Callable
 
 
 class BNFPreDefined(Enum):
@@ -12,13 +12,6 @@ class BNFPreDefined(Enum):
     Assign = r"=|(\*=)|(\%=)|(\^=)|(\+=)|(-=)|(/=)"
     Unop = r"-|(not)"
     SingleEqual = r"="
-    # Multiply = r"\*="
-    # Modulate = r"\%="
-    # Exponate = r"\^="
-    # Add = r"\+="
-    # Subtract = "-="
-    # Divide = "/="
-    # E = r"^$"
     Type = r"\b(number)|(string)|(list)|(bool)\b"
     Colon = r":"
     Dot = r"\."
@@ -116,7 +109,6 @@ class CompilerRules(Enum):
     Plus = r"\+"
     Minus = "-"
 
-
     # terminator
     Colon = ":"
     Comma = ","
@@ -134,7 +126,7 @@ class CompilerRules(Enum):
 RuleType = BNFRules | CompilerRules | BNFPreDefined | Keywords
 OptionalStr = str | None
 Token = NamedTuple("Token", (("token_type", RuleType), ("token_str", str), ("location", tuple[int, int])))
-Rule = NamedTuple("Rule", (("rule", str), ("optional", str)))
+Rule = NamedTuple("Rule", (("rule", str | Callable[[Token], bool]), ("optional", str)))
 IncompleteRules = list[list[list[Rule]]]
 
 
@@ -143,5 +135,5 @@ class CompilerError:
     error_type: str
     lines: list[str]
     offending_token: Token
-    error_msg: str=""
-    file: str=""
+    error_msg: str = ""
+    file: str = ""

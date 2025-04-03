@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Generator, Callable
+from typing import Generator
 from rules import *
 
 

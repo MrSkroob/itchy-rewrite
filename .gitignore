@@ -1,5 +1,6 @@
 /.vscode
+/.venv
 parser.py
-small_test.itch
 __pycache__/
 small_test.itch
+tokenizer_with_prints.py
