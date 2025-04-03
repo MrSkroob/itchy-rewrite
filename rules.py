@@ -127,13 +127,24 @@ RuleType = BNFRules | CompilerRules | BNFPreDefined | Keywords
 OptionalStr = str | None
 Token = NamedTuple("Token", (("token_type", RuleType), ("token_str", str), ("location", tuple[int, int])))
 Rule = NamedTuple("Rule", (("rule", str | Callable[[Token], bool]), ("optional", str)))
-IncompleteRules = list[list[list[Rule]]]
+IncompleteRules = list[str, list[list[Rule]]] | list
 
 
 @dataclass
-class CompilerError:
-    error_type: str
-    lines: list[str]
-    offending_token: Token
-    error_msg: str = ""
-    file: str = ""
+class Variable:
+    name: str
+    type: str
+    token: Token
+    procedure_scope: str = None
+
+
+class CompilerError(Exception):
+    def __init__(self, error_type: str, lines: list[str], offending_token: Token, error_msg: str = "",
+                 file: str = ""):
+        super().__init__(error_msg)
+        self.error_type: str = error_type
+        self.lines: list[str] = lines
+        self.offending_token: Token = offending_token
+        self.error_msg: str = error_msg
+        self.file: str = file
+

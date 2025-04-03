@@ -447,11 +447,21 @@ class Parser:
         root_node.display_tree()
 
         return root_node
-        # whoop! Syntax checking passed.
+
+
+def var_in_scope(variable: Variable, procedure_stack: str):
+    if variable.procedure_scope is None:
+        return True
+    return variable.procedure_scope == procedure_stack
 
 
 class Compiler:
     def __init__(self, code_fname: str, grammar_fname: str):
+        self.variables = {}
+        self.temp_variables = {}
+        self.procedures = {}
+        self.current_procedure = ""
+
         with open(code_fname) as f:
             code = f.read()
             self.code_path = os.path.abspath(f.name)
@@ -484,50 +494,75 @@ class Compiler:
         token = error.offending_token
         line_number = token.location[0]
 
-        print(f"  {error.error_type} in:", self.code_path, "line", line_number + 1)
+        print(f'  {error.error_type} in: "{self.code_path}" line {line_number + 1}')
         print("\t" + lines[line_number])
         print("\t" + " " * token.location[1] + "^HERE")
         print("  " + error.error_msg)
 
-    def generate_code(self, ast: TreeNode) -> tuple[bool, list[CompilerError]]:
+    def variable_in_scope(self, variable_name: str):
+        if variable_name in self.variables:
+            return True
+        if variable_name in self.procedures:
+            return True
+        if variable_name in self.temp_variables:
+            variable = self.temp_variables[variable_name]
+            return variable.procedure_scope == self.current_procedure
+        else:
+            return False
+
+    def generate_code(self, ast: TreeNode) -> list[CompilerError]:
         # blocks: dict[str] = {}
         warnings: list[CompilerError] = []
-        variables: dict[str, tuple[str, Token]] = {}
-        procedures: dict[str, tuple[Token, dict[str, str]]] = {}
-        temp_variables: dict[str, tuple[str, Token]]
-        current_wrap = 0
+        self.variables: dict[str, Variable] = {}
+        self.procedures: dict[str, tuple[Token, dict[str, str]]] = {}
+        # no, these aren't really 'local variables'. They're only usable within a certain procedure.
+        self.temp_variables: dict[str, Variable] = {}
+        self.current_procedure = ""
+        close_procedure = 0
         stack = []
         node_generator = walk_tree(ast)
         for node in node_generator:
             stack.append(node)
+
+            if node.layer <= close_procedure:
+                self.current_procedure = ""
+
             match node.rule_name:
                 case "<vardefstat>":
                     var_type = next(node_generator).token.token_str
                     var_name = next(node_generator).token
-                    if var_name.token_str in variables:
+                    if var_name.token_str in self.variables:
                         warning = CompilerError("Duplicate Declaration Warning",
                                                 self.lines,
                                                 var_name,
                                                 f"You have already defined a variable with the same name on line "
-                                                f"{variables[var_name.token_str][1].location[0] + 1}.")
+                                                f"{self.variables[var_name.token_str].token.location[0] + 1}.")
                         warnings.append(warning)
 
-                    variables[var_name.token_str] = (var_type, var_name)
+                    self.variables[var_name.token_str] = Variable(var_name.token_str, var_type, var_name)
                 case "<varassignstat>":
                     next(node_generator)
                     var_name = next(node_generator).token
                     # operator = next(node_generator).token
-                    if var_name.token_str not in variables:
-                        error = CompilerError("Name Error",
+                    if not self.variable_in_scope(var_name.token_str):
+                        raise CompilerError("Name Error",
                                               self.lines,
                                               var_name,
                                               f"Name '{var_name.token_str}' is not defined.",
                                               self.code_path)
-                        return False, [error]
                 case "<function>":
                     function_name = next(node_generator).token
+
+                    if self.current_procedure != "":
+                        raise CompilerError("Scope Error",
+                                              self.lines,
+                                              function_name,
+                                              f"Nested procedure definitions are invalid.",
+                                              self.code_path)
+
                     args: dict[str, str] = {}
-                    procedures[function_name.token_str] = (function_name, args)
+
+                    self.procedures[function_name.token_str] = (function_name, args)
                     if next(node_generator).rule_name == "<funcbody>":
                         if next(node_generator).rule_name == "<paramlist>":
                             while True:
@@ -536,19 +571,21 @@ class Compiler:
                                 arg_type = next(node_generator).token.token_str
                                 if arg_name.token_str in args:
                                     # raise error
-                                    error = CompilerError("Name Error",
+                                    raise CompilerError("Name Error",
                                                           self.lines,
                                                           arg_name,
                                                           f"Duplicate '{arg_name.token_str}' argument.",
                                                           self.code_path)
-                                    return False, [error]
 
                                 args[arg_name.token_str] = arg_type
+                                self.temp_variables[arg_name.token_str] = Variable(arg_name.token_str, arg_type,
+                                                                                   arg_name, function_name.token_str)
                                 if next(node_generator).rule_name == "<wrap>":
-                                    current_wrap += 1
+                                    self.current_procedure = function_name.token_str
+                                    close_procedure = node.layer
                                     break
 
-        return True, warnings
+        return warnings
 
     def compile(self):
         result = self.parser.parse(self.tokenizer)
@@ -565,16 +602,16 @@ class Compiler:
             return
         else:
             # pass
-            success, errors = self.generate_code(result)
-            if not success:
-                self.print_error(errors[0])
-            else:
-                if len(errors) > 0:
+            try:
+                warnings = self.generate_code(result)
+                if len(warnings) > 0:
                     print("""
-The compiler encountered some potential issues.
-Your code will still run, but it's likely you will encounter unexpected behaviour.
-If you want these to halt compilation, add the '--!strict' flag at the top of your file.
-If you want to ignore these warnings, add the '--!nonstrict' flag at the top of your file.
-                          """)
-                    for i in errors:
+                The compiler encountered some potential issues.
+                Your code will still run, but it's likely you will encounter unexpected behaviour.
+                If you want these to halt compilation, add the '--!strict' flag at the top of your file.
+                If you want to ignore these warnings, add the '--!nonstrict' flag at the top of your file.
+                                          """)
+                    for i in warnings:
                         self.print_error(i)
+            except CompilerError as e:
+                self.print_error(e)
