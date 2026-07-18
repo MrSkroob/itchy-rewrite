@@ -1,3 +1,7 @@
+archive of NEA project + unfinished rewrite
+
+old readme below:
+
 Check out the rewrite branch for an ongoing rewrite
 
 
