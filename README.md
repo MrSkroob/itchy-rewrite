@@ -1,4 +1,4 @@
-archive of NEA project + unfinished rewrite
+archive of unfinished rewrite of NEA project
 
 old readme below:
 
